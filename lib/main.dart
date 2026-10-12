@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:flutter/services.dart';
 
 void main() => runApp(const VideoDownloader());
 class VideoDownloader extends StatelessWidget {
@@ -21,6 +22,10 @@ class _DownloadScreenState extends State<DownloadScreen> {
   double progress = 0;
   bool busy = false;
   String status = 'Direkten, erlaubten Medienlink einfügen';
+  Future<void> pasteLink() async {
+    final data = await Clipboard.getData('text/plain');
+    if (data?.text != null) setState(() => url.text = data!.text!.trim());
+  }
   Future<void> download() async {
     final uri = Uri.tryParse(url.text.trim());
     if (uri == null || !['https','http'].contains(uri.scheme) || uri.host.isEmpty) {
@@ -56,6 +61,9 @@ class _DownloadScreenState extends State<DownloadScreen> {
       const SizedBox(height: 20),
       TextField(controller: url, decoration: const InputDecoration(
         border: OutlineInputBorder(), labelText: 'Direkter Medienlink')),
+      Align(alignment: Alignment.centerRight, child: TextButton.icon(
+        onPressed: busy ? null : pasteLink,
+        icon: const Icon(Icons.content_paste), label: const Text('Link einfügen'))),
       const SizedBox(height: 16),
       FilledButton(onPressed: busy ? null : download, child: const Text('Herunterladen')),
       if (busy) TextButton(onPressed: () => cancel?.cancel('Abgebrochen'), child: const Text('Abbrechen')),
