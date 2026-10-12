@@ -56,6 +56,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
   Completer<void>? activeYoutubeWait;
   Completer<void>? cancelSignal;
   bool cancelling = false;
+  final List<CancelToken> parallelCancels = [];
+  int parallelConnections = 0;
   bool audioOnly = false;
   int preferredHeight = 720;
   static const qualityChoices = <int, String>{0: 'Beste verfügbar', 2160: '4K · 2160p', 1440: '1440p', 1080: 'Full HD · 1080p', 720: 'HD · 720p', 480: '480p', 360: '360p', 240: '240p'};
@@ -126,6 +128,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
     stopYoutube = true;
     cancelling = true;
     cancel?.cancel('Abgebrochen');
+    for (final token in parallelCancels) { token.cancel('Abgebrochen'); }
     activeYoutubeStream?.cancel();
     final pending = activeYoutubeWait;
     if (pending != null && !pending.isCompleted) pending.complete();
@@ -211,6 +214,88 @@ class _DownloadScreenState extends State<DownloadScreen> {
           .take(6).toList();
       sourceCount = alternatives.length;
       sourceAttempt = 0;
+      Future<File?> parallelStream(StreamInfo info, String path, String description, double start, double span) async {
+        final length = info.size.totalBytes;
+        if (length < 8 * 1024 * 1024) return null;
+        final probeToken = CancelToken();
+        parallelCancels.add(probeToken);
+        Response<List<int>> probe;
+        try {
+          probe = await dio.get<List<int>>(info.url.toString(),
+            options: Options(responseType: ResponseType.bytes,
+              headers: {'Range': 'bytes=0-0'},
+              receiveTimeout: const Duration(seconds: 12),
+              sendTimeout: const Duration(seconds: 12),
+              validateStatus: (code) => code != null && code < 500),
+            cancelToken: probeToken);
+        } catch (_) {
+          return null;
+        } finally {
+          parallelCancels.remove(probeToken);
+        }
+        if (probe.statusCode != 206 ||
+            !(probe.headers.value('content-range') ?? '').startsWith('bytes 0-0/')) {
+          return null;
+        }
+        const workers = 4;
+        final chunks = <File>[];
+        final amounts = List<int>.filled(workers, 0);
+        parallelConnections = workers;
+        if (mounted) setState(() {
+          status = '$description · $workers parallele Verbindungen';
+          downloadPhase = 'Parallel: $workers Verbindungen';
+          totalBytes = length;
+          receivedBytes = 0;
+        });
+        try {
+          await Future.wait(List.generate(workers, (index) async {
+            final first = (length * index) ~/ workers;
+            final last = (length * (index + 1)) ~/ workers - 1;
+            final part = File('$path.part$index');
+            chunks.add(part);
+            tempFiles.add(part);
+            final token = CancelToken();
+            parallelCancels.add(token);
+            try {
+              await dio.download(info.url.toString(), part.path,
+                cancelToken: token,
+                options: Options(headers: {'Range': 'bytes=$first-$last'},
+                  receiveTimeout: const Duration(seconds: 15),
+                  validateStatus: (code) => code == 206),
+                onReceiveProgress: (count, total) {
+                  if (stopYoutube) return;
+                  amounts[index] = count;
+                  final sum = amounts.fold<int>(0, (a, b) => a + b);
+                  if (mounted) setState(() {
+                    receivedBytes = sum;
+                    progress = start + span * (sum / length).clamp(0.0, 1.0);
+                  });
+                });
+            } finally {
+              parallelCancels.remove(token);
+            }
+            if (await part.length() != last - first + 1) {
+              throw StateError('Teil $index unvollständig');
+            }
+          }));
+          if (stopYoutube) throw StateError('Abgebrochen');
+          final output = File(path);
+          tempFiles.add(output);
+          final sink = output.openWrite();
+          try {
+            for (var index = 0; index < workers; index++) {
+              await sink.addStream(File('$path.part$index').openRead());
+            }
+            await sink.flush();
+          } finally {
+            await sink.close();
+          }
+          for (final part in chunks) { if (await part.exists()) await part.delete(); }
+          return output;
+        } finally {
+          parallelConnections = 0;
+        }
+      }
       Future<File> saveStream(StreamInfo info, String path, String description, double start, double span) async {
         final file = File(path);
         tempFiles.add(file);
@@ -270,6 +355,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
             });
           }
           try {
+            final parallel = await parallelStream(candidate, candidatePath, 'Quelle ${i + 1}/${alternatives.length}: $activeQuality', 0, 1);
+            if (parallel != null) return parallel;
             if (candidate is MuxedStreamInfo) {
               return await saveStream(candidate, candidatePath,
                   'Quelle ${i + 1}/${alternatives.length}: $activeQuality mit Ton', 0, 1);
@@ -397,7 +484,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       FilledButton.icon(onPressed: busy ? null : download, icon: const Icon(Icons.file_download_rounded), label: const Text('Download starten', style: TextStyle(fontWeight: FontWeight.bold))),
       if (busy) OutlinedButton.icon(onPressed: cancelDownload, icon: const Icon(Icons.stop_circle_outlined), label: const Text('Download sofort abbrechen')),
       if (busy) Card(child: Padding(padding: const EdgeInsets.all(14), child: Text('Aktueller Schritt: $status'))),
-      if (busy && sourceCount > 0 && !audioOnly) Text('Stream $sourceAttempt von $sourceCount · $activeQuality'),
+      if (busy && sourceCount > 0 && !audioOnly) Text('Stream $sourceAttempt von $sourceCount · $activeQuality · ${parallelConnections > 0 ? '$parallelConnections parallel' : 'Einzelverbindung'}'),
       const SizedBox(height: 16),
       if (busy) ...[
         LinearProgressIndicator(value: progress.clamp(0.0, 1.0)),
