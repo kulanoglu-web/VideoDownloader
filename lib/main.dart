@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/services.dart';
 
 void main() => runApp(const VideoDownloader());
@@ -51,6 +52,10 @@ class _DownloadScreenState extends State<DownloadScreen> {
   final dio = Dio();
   CancelToken? cancel;
   bool stopYoutube = false;
+  StreamSubscription<List<int>>? activeYoutubeStream;
+  Completer<void>? activeYoutubeWait;
+  Completer<void>? cancelSignal;
+  bool cancelling = false;
   bool audioOnly = false;
   int preferredHeight = 720;
   static const qualityChoices = <int, String>{0: 'Beste verfügbar', 2160: '4K · 2160p', 1440: '1440p', 1080: 'Full HD · 1080p', 720: 'HD · 720p', 480: '480p', 360: '360p', 240: '240p'};
@@ -113,7 +118,32 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (mounted) setState(() => searching = false);
     }
   }
+  void cancelDownload() {
+    if (!busy) return;
+    stopYoutube = true;
+    cancelling = true;
+    cancel?.cancel('Abgebrochen');
+    activeYoutubeStream?.cancel();
+    final pending = activeYoutubeWait;
+    if (pending != null && !pending.isCompleted) pending.complete();
+    final signal = cancelSignal;
+    if (signal != null && !signal.isCompleted) signal.complete();
+    setState(() { busy = false; status = 'Abgebrochen'; downloadPhase = 'Abgebrochen'; });
+  }
+  Future<T> interruptible<T>(Future<T> operation, Duration timeout) async {
+    final signal = cancelSignal;
+    if (signal == null) return operation.timeout(timeout);
+    final result = await Future.any<Object>([
+      operation.timeout(timeout),
+      signal.future.then<Object>((_) => throw StateError('Abgebrochen')),
+    ]);
+    return result as T;
+  }
   Future<void> download() async {
+    if (busy) return;
+    stopYoutube = false;
+    cancelling = false;
+    cancelSignal = Completer<void>();
     final links = url.text.split(RegExp(r'[\s,]+')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     if (links.length > 1) {
       setState(() { itemCount = links.length; currentItem = 0; });
@@ -160,12 +190,12 @@ class _DownloadScreenState extends State<DownloadScreen> {
     } finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> downloadYoutube(Uri uri) async {
-    setState(() { busy = true; stopYoutube = false; progress = 0; receivedBytes = 0; totalBytes = 0; downloadPhase = 'Videoformate ermitteln'; lastSavedFile = null; status = 'Videoformate werden ermittelt'; });
+    setState(() { busy = true; progress = 0; receivedBytes = 0; totalBytes = 0; downloadPhase = 'Videoformate ermitteln'; lastSavedFile = null; status = 'Videoformate werden ermittelt'; });
     final tempFiles = <File>[];
     try {
-      final video = await youtube.videos.get(uri.toString()).timeout(const Duration(seconds: 25));
-      final manifest = await youtube.videos.streams.getManifest(video.id).timeout(const Duration(seconds: 35));
-      if (stopYoutube) return;
+      final video = await interruptible(youtube.videos.get(uri.toString()), const Duration(seconds: 25));
+      final manifest = await interruptible(youtube.videos.streams.getManifest(video.id), const Duration(seconds: 35));
+      if (stopYoutube) throw StateError('Abgebrochen');
       final directory = await getApplicationDocumentsDirectory();
       final base = '${directory.path}${Platform.pathSeparator}${video.id.value}';
       final audio = manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null;
@@ -187,14 +217,30 @@ class _DownloadScreenState extends State<DownloadScreen> {
         var received = 0;
         try {
           if (mounted) setState(() { status = description; downloadPhase = description; receivedBytes = 0; totalBytes = info.size.totalBytes; });
-          await for (final chunk in youtube.videos.streams.get(info).timeout(const Duration(seconds: 20))) {
-            if (stopYoutube) break;
-            sink.add(chunk);
-            received += chunk.length;
-            if (mounted && info.size.totalBytes > 0) {
-              setState(() { receivedBytes = received; progress = start + span * (received / info.size.totalBytes).clamp(0.0, 1.0); });
-            }
-          }
+          final done = Completer<void>();
+          activeYoutubeWait = done;
+          activeYoutubeStream = youtube.videos.streams.get(info)
+              .timeout(const Duration(seconds: 20)).listen(
+            (chunk) {
+              if (stopYoutube) return;
+              sink.add(chunk);
+              received += chunk.length;
+              if (mounted && info.size.totalBytes > 0) {
+                setState(() {
+                  receivedBytes = received;
+                  progress = start + span * (received / info.size.totalBytes).clamp(0.0, 1.0);
+                });
+              }
+            },
+            onError: (Object error, StackTrace stack) {
+              if (!done.isCompleted) done.completeError(error, stack);
+            },
+            onDone: () { if (!done.isCompleted) done.complete(); },
+            cancelOnError: true,
+          );
+          await done.future;
+          activeYoutubeStream = null;
+          activeYoutubeWait = null;
           await sink.flush();
         } finally {
           await sink.close();
@@ -236,12 +282,14 @@ class _DownloadScreenState extends State<DownloadScreen> {
         });
       }
     } catch (e) {
-      if (mounted) { setState(() => status = 'Downloadfehler: $e. Bitte 480p oder 360p versuchen.'); }
+      if (mounted && !stopYoutube) { setState(() => status = 'Downloadfehler: $e. Bitte 480p oder 360p versuchen.'); }
       for (final file in tempFiles) {
         if (await file.exists()) await file.delete();
       }
     } finally {
-      if (mounted) setState(() => busy = false);
+      activeYoutubeStream = null;
+      activeYoutubeWait = null;
+      if (mounted && !cancelling) setState(() => busy = false);
     }
   }
   @override void dispose() { cancel?.cancel(); youtube.close(); dio.close(); url.dispose(); searchController.dispose(); super.dispose(); }
@@ -313,7 +361,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         onChanged: busy ? null : (value) => setState(() => audioOnly = value)),
       const SizedBox(height: 16),
       FilledButton.icon(onPressed: busy ? null : download, icon: const Icon(Icons.file_download_rounded), label: const Text('Download starten', style: TextStyle(fontWeight: FontWeight.bold))),
-      if (busy) TextButton(onPressed: () { stopYoutube = true; cancel?.cancel('Abgebrochen'); setState(() => status = 'Abbruch angefordert'); }, child: const Text('Abbrechen')),
+      if (busy) OutlinedButton.icon(onPressed: cancelDownload, icon: const Icon(Icons.stop_circle_outlined), label: const Text('Download sofort abbrechen')),
       if (busy) Card(child: Padding(padding: const EdgeInsets.all(14), child: Text('Aktueller Schritt: $status'))),
       const SizedBox(height: 16),
       if (busy) ...[
