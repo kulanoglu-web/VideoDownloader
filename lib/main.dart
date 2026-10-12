@@ -133,11 +133,10 @@ class _DownloadScreenState extends State<DownloadScreen> {
   Future<T> interruptible<T>(Future<T> operation, Duration timeout) async {
     final signal = cancelSignal;
     if (signal == null) return operation.timeout(timeout);
-    final result = await Future.any<Object>([
+    return Future.any<T>([
       operation.timeout(timeout),
-      signal.future.then<Object>((_) => throw StateError('Abgebrochen')),
+      signal.future.then<T>((_) => throw StateError('Abgebrochen')),
     ]);
-    return result as T;
   }
   Future<void> download() async {
     if (busy) return;
