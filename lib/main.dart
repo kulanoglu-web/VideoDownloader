@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
@@ -19,6 +20,10 @@ class _DownloadScreenState extends State<DownloadScreen> {
   final url = TextEditingController();
   final dio = Dio();
   CancelToken? cancel;
+  bool stopYoutube = false;
+  bool audioOnly = false;
+  final youtube = YoutubeExplode();
+  bool isYoutube(Uri uri) => const ['youtu.be','youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].contains(uri.host.toLowerCase());
   double progress = 0;
   bool busy = false;
   String status = 'Direkten, erlaubten Medienlink einfügen';
@@ -55,6 +60,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
     if (uri == null || !['https','http'].contains(uri.scheme) || uri.host.isEmpty) {
       setState(() => status = 'Bitte gültige HTTP(S)-URL eingeben'); return;
     }
+    if (isYoutube(uri)) { await downloadYoutube(uri); return; }
     final fileName = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
     if (!RegExp(r'\.(mp4|m4a|mp3|webm|mov)$', caseSensitive: false).hasMatch(fileName)) {
       setState(() => status = 'Aktuell werden nur direkte Mediendatei-URLs unterstützt'); return;
@@ -76,7 +82,63 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (mounted) setState(() => status = 'Fehler: $e');
     } finally { if (mounted) setState(() => busy = false); }
   }
-  @override void dispose() { cancel?.cancel(); dio.close(); url.dispose(); super.dispose(); }
+  Future<void> downloadYoutube(Uri uri) async {
+    setState(() { busy = true; stopYoutube = false; progress = 0; lastSavedFile = null; status = 'YouTube-Informationen werden geladen'; });
+    File? target;
+    IOSink? sink;
+    try {
+      final video = await youtube.videos.get(uri.toString());
+      if (stopYoutube) return;
+      final manifest = await youtube.videos.streams.getManifest(video.id);
+      if (stopYoutube) return;
+      final info = audioOnly
+          ? (manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null)
+          : (manifest.muxed.isNotEmpty ? manifest.muxed.withHighestVideoQuality() : null);
+      if (info == null) {
+        throw StateError(audioOnly ? 'Kein Audiostream verfügbar' : 'Kein kombinierter Videostream verfügbar');
+      }
+      final directory = await getApplicationDocumentsDirectory();
+      final extension = info.container.name;
+      final filename = '${video.id.value}.$extension';
+      target = File('${directory.path}${Platform.pathSeparator}$filename');
+      sink = target.openWrite();
+      var received = 0;
+      final total = info.size.totalBytes;
+      if (mounted) setState(() => status = 'Lade: ${video.title}');
+      await for (final chunk in youtube.videos.streams.get(info)) {
+        if (stopYoutube) break;
+        sink.add(chunk);
+        received += chunk.length;
+        if (mounted && total > 0) {
+          setState(() => progress = (received / total).clamp(0.0, 1.0));
+        }
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (stopYoutube) {
+        await target.delete();
+        if (mounted) setState(() => status = 'Abgebrochen');
+      } else if (mounted) {
+        setState(() {
+          lastSavedFile = target!.path;
+          downloadedFiles.remove(target.path);
+          downloadedFiles.insert(0, target.path);
+          status = 'Gespeichert: ${target.path}';
+          progress = 1;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => status = 'YouTube-Fehler: $e');
+      if (sink != null) {
+        await sink.close();
+        if (target != null && await target.exists()) await target.delete();
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+  @override void dispose() { cancel?.cancel(); youtube.close(); dio.close(); url.dispose(); super.dispose(); }
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('VideoDownloader')),
     body: Padding(padding: const EdgeInsets.all(20), child: Column(
@@ -84,13 +146,15 @@ class _DownloadScreenState extends State<DownloadScreen> {
       const Text('Werbefrei · Lokal · Ohne Konto'),
       const SizedBox(height: 20),
       TextField(controller: url, decoration: const InputDecoration(
-        border: OutlineInputBorder(), labelText: 'Direkter Medienlink')),
+        border: OutlineInputBorder(), labelText: 'Video-URL oder direkter Medienlink')),
       Align(alignment: Alignment.centerRight, child: TextButton.icon(
         onPressed: busy ? null : pasteLink,
         icon: const Icon(Icons.content_paste), label: const Text('Link einfügen'))),
+      SwitchListTile(title: const Text('Nur Audio herunterladen'), value: audioOnly,
+        onChanged: busy ? null : (value) => setState(() => audioOnly = value)),
       const SizedBox(height: 16),
       FilledButton(onPressed: busy ? null : download, child: const Text('Herunterladen')),
-      if (busy) TextButton(onPressed: () => cancel?.cancel('Abgebrochen'), child: const Text('Abbrechen')),
+      if (busy) TextButton(onPressed: () { stopYoutube = true; cancel?.cancel('Abgebrochen'); }, child: const Text('Abbrechen')),
       const SizedBox(height: 16),
       LinearProgressIndicator(value: busy && progress == 0 ? null : progress),
       if (busy && progress > 0) Text('${(progress * 100).toStringAsFixed(0)} %'),
