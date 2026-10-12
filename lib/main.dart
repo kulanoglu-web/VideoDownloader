@@ -12,7 +12,30 @@ void main() => runApp(const VideoDownloader());
 class VideoDownloader extends StatelessWidget {
   const VideoDownloader({super.key});
   @override Widget build(BuildContext context) => MaterialApp(
-    title: 'VideoDownloader', theme: ThemeData.dark(useMaterial3: true),
+    title: 'VideoDownloader',
+    theme: ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF56D8C7),
+        brightness: Brightness.dark,
+        surface: const Color(0xFF151B29),
+      ),
+      scaffoldBackgroundColor: const Color(0xFF0B1020),
+      appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF0B1020), centerTitle: false),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: const Color(0xFF202A3B),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: const BorderSide(color: Color(0xFF56D8C7), width: 1.5)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+      ),
+      cardTheme: CardThemeData(color: const Color(0xFF172033), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+    ),
     home: const DownloadScreen(), debugShowCheckedModeBanner: false);
 }
 class DownloadScreen extends StatefulWidget {
@@ -223,10 +246,14 @@ class _DownloadScreenState extends State<DownloadScreen> {
   }
   @override void dispose() { cancel?.cancel(); youtube.close(); dio.close(); url.dispose(); searchController.dispose(); super.dispose(); }
   @override Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('VideoDownloader')),
+    appBar: AppBar(title: const Row(children: [Icon(Icons.download_for_offline_rounded, color: Color(0xFF56D8C7)), SizedBox(width: 10), Text('VideoDownloader', style: TextStyle(fontWeight: FontWeight.w700))])),
     body: SingleChildScrollView(child: Padding(padding: const EdgeInsets.all(20), child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const Text('Werbefrei · Lokal · Ohne Konto'),
+      const Text('DEINE MEDIATHEK', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2, color: Color(0xFF56D8C7))),
+      const SizedBox(height: 5),
+      const Text('Videos entdecken & speichern', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 5),
+      const Text('Suche, Qualität wählen, Download starten', style: TextStyle(color: Colors.white60)),
       const SizedBox(height: 12),
       TextField(
         controller: searchController,
@@ -246,16 +273,16 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (searchStatus.isNotEmpty) Text(searchStatus),
       if (searchResults.isNotEmpty)
         SizedBox(
-          height: 230,
+          height: 270,
           child: ListView.builder(
             itemCount: searchResults.length,
             itemBuilder: (context, index) {
               final video = searchResults[index];
-              return ListTile(
-                leading: const Icon(Icons.play_circle_outline),
+              return Card(margin: const EdgeInsets.symmetric(vertical: 4), child: ListTile(
+                leading: const CircleAvatar(backgroundColor: Color(0xFF243C4A), child: Icon(Icons.play_arrow_rounded, color: Color(0xFF56D8C7))),
                 title: Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis),
                 subtitle: Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis),
-                trailing: const Icon(Icons.download),
+                trailing: const Icon(Icons.download_rounded, color: Color(0xFF56D8C7)),
                 onTap: busy ? null : () {
                   setState(() {
                     url.text = 'https://www.youtube.com/watch?v=${video.id.value}';
@@ -263,11 +290,13 @@ class _DownloadScreenState extends State<DownloadScreen> {
                   });
                   download();
                 },
-              );
+              ));
             },
           ),
         ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 20),
+      const Text('DOWNLOAD EINRICHTEN', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.4, color: Color(0xFF56D8C7))),
+      const SizedBox(height: 10),
       TextField(controller: url, minLines: 1, maxLines: 4, decoration: const InputDecoration(
         border: OutlineInputBorder(), labelText: 'Video-Links (mehrere mit Leerzeichen oder Zeilenumbruch)')),
       Align(alignment: Alignment.centerRight, child: TextButton.icon(
@@ -283,9 +312,9 @@ class _DownloadScreenState extends State<DownloadScreen> {
       SwitchListTile(title: const Text('Nur Audio herunterladen'), value: audioOnly,
         onChanged: busy ? null : (value) => setState(() => audioOnly = value)),
       const SizedBox(height: 16),
-      FilledButton(onPressed: busy ? null : download, child: const Text('Herunterladen')),
+      FilledButton.icon(onPressed: busy ? null : download, icon: const Icon(Icons.file_download_rounded), label: const Text('Download starten', style: TextStyle(fontWeight: FontWeight.bold))),
       if (busy) TextButton(onPressed: () { stopYoutube = true; cancel?.cancel('Abgebrochen'); setState(() => status = 'Abbruch angefordert'); }, child: const Text('Abbrechen')),
-      if (busy) Text('Aktueller Schritt: $status'),
+      if (busy) Card(child: Padding(padding: const EdgeInsets.all(14), child: Text('Aktueller Schritt: $status'))),
       const SizedBox(height: 16),
       if (busy) ...[
         LinearProgressIndicator(value: progress == 0 ? null : progress),
@@ -324,7 +353,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
       ],
       const SizedBox(height: 12), Text(status),
       const SizedBox(height: 18),
-      const Text('Downloads im internen App-Speicher (noch nicht im öffentlichen Downloads-Ordner)', style: TextStyle(fontWeight: FontWeight.bold)),
+      const Text('DEINE DOWNLOADS', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.4, color: Color(0xFF56D8C7))),
+      const Text('Aktuell im internen App-Speicher', style: TextStyle(fontSize: 12, color: Colors.white60)),
       SizedBox(height: 220, child: ListView.builder(itemCount: downloadedFiles.length,
         itemBuilder: (context, index) {
           final file = downloadedFiles[index];
