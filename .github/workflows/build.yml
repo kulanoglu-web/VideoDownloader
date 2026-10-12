@@ -13,10 +13,19 @@ jobs:
           channel: stable
       - name: Generate Android platform
         run: flutter create --platforms=android .
-      - name: Enable Android network permission
-        run: sed -i 's|<manifest xmlns:android=|<manifest xmlns:android=|' android/app/src/main/AndroidManifest.xml
       - name: Add Internet permission
-        run: sed -i '/<application/i\\    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text()
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in s:
+              s = s.replace('<application', permission + '\n    <application', 1)
+          p.write_text(s)
+          PY
+      - name: Remove generated example test
+        run: rm -f test/widget_test.dart
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter build apk --debug
