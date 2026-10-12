@@ -31,6 +31,11 @@ class _DownloadScreenState extends State<DownloadScreen> {
   final youtube = YoutubeExplode();
   bool isYoutube(Uri uri) => const ['youtu.be','youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].contains(uri.host.toLowerCase());
   double progress = 0;
+  int receivedBytes = 0;
+  int totalBytes = 0;
+  String downloadPhase = '';
+  int currentItem = 0;
+  int itemCount = 0;
   bool busy = false;
   String status = 'Direkten, erlaubten Medienlink einfügen';
   String? lastSavedFile;
@@ -83,16 +88,35 @@ class _DownloadScreenState extends State<DownloadScreen> {
     }
   }
   Future<void> download() async {
+    final links = url.text.split(RegExp(r'[\\s,]+')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (links.length > 1) {
+      setState(() { itemCount = links.length; currentItem = 0; });
+      for (var i = 0; i < links.length; i++) {
+        if (stopYoutube && i > 0) break;
+        if (mounted) setState(() => currentItem = i + 1);
+        final link = Uri.tryParse(links[i]);
+        if (link == null || ![\'http\',\'https\'].contains(link.scheme)) continue;
+        if (isYoutube(link)) { await downloadYoutube(link); }
+        else { url.text = links[i]; await downloadDirect(link); }
+      }
+      if (mounted) setState(() { itemCount = 0; currentItem = 0; });
+      return;
+    }
+    itemCount = 0;
+    currentItem = 0;
     final uri = Uri.tryParse(url.text.trim());
-    if (uri == null || !['https','http'].contains(uri.scheme) || uri.host.isEmpty) {
-      setState(() => status = 'Bitte gültige HTTP(S)-URL eingeben'); return;
+    if (uri == null || ![\'https\',\'http\'].contains(uri.scheme) || uri.host.isEmpty) {
+      setState(() => status = \'Bitte gültige HTTP(S)-URL eingeben\'); return;
     }
     if (isYoutube(uri)) { await downloadYoutube(uri); return; }
+    await downloadDirect(uri);
+  }
+  Future<void> downloadDirect(Uri uri) async {
     final fileName = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
     if (!RegExp(r'\.(mp4|m4a|mp3|webm|mov)$', caseSensitive: false).hasMatch(fileName)) {
       setState(() => status = 'Aktuell werden nur direkte Mediendatei-URLs unterstützt'); return;
     }
-    setState(() { busy = true; progress = 0; lastSavedFile = null; status = 'Download läuft'; });
+    setState(() { busy = true; progress = 0; receivedBytes = 0; totalBytes = 0; downloadPhase = 'Direktdownload'; lastSavedFile = null; status = 'Download läuft'; });
     cancel = CancelToken();
     try {
       final directory = await getApplicationDocumentsDirectory();
@@ -100,7 +124,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       final destination = '${directory.path}${Platform.pathSeparator}$safeName';
       await dio.downloadUri(uri, destination, cancelToken: cancel,
         onReceiveProgress: (received, total) {
-          if (mounted && total > 0) setState(() => progress = received / total);
+          if (mounted) setState(() { receivedBytes = received; totalBytes = total; if (total > 0) progress = received / total; });
         });
       if (mounted) setState(() { lastSavedFile = destination; downloadedFiles.remove(destination); downloadedFiles.insert(0, destination); status = 'Gespeichert: $destination'; });
     } on DioException catch (e) {
@@ -110,7 +134,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
     } finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> downloadYoutube(Uri uri) async {
-    setState(() { busy = true; stopYoutube = false; progress = 0; lastSavedFile = null; status = 'Videoformate werden ermittelt'; });
+    setState(() { busy = true; stopYoutube = false; progress = 0; receivedBytes = 0; totalBytes = 0; downloadPhase = 'Videoformate ermitteln'; lastSavedFile = null; status = 'Videoformate werden ermittelt'; });
     final tempFiles = <File>[];
     try {
       final video = await youtube.videos.get(uri.toString());
@@ -127,13 +151,13 @@ class _DownloadScreenState extends State<DownloadScreen> {
         final sink = file.openWrite();
         var received = 0;
         try {
-          if (mounted) setState(() => status = description);
+          if (mounted) setState(() { status = description; downloadPhase = description; receivedBytes = 0; totalBytes = info.size.totalBytes; });
           await for (final chunk in youtube.videos.streams.get(info)) {
             if (stopYoutube) break;
             sink.add(chunk);
             received += chunk.length;
             if (mounted && info.size.totalBytes > 0) {
-              setState(() => progress = start + span * (received / info.size.totalBytes).clamp(0.0, 1.0));
+              setState(() { receivedBytes = received; progress = start + span * (received / info.size.totalBytes).clamp(0.0, 1.0); });
             }
           }
           await sink.flush();
@@ -151,7 +175,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         final videoFile = await saveStream(hd, '$base.video.${hd.container.name}', 'HD-Video wird geladen', 0, 0.7);
         final audioFile = await saveStream(audio, '$base.audio.${audio.container.name}', 'Ton wird geladen', 0.7, 0.25);
         output = File('$base.${hd.container.name == 'mp4' ? 'mp4' : 'mkv'}');
-        if (mounted) setState(() { status = 'HD-Video und Ton werden zusammengefügt'; progress = 0.95; });
+        if (mounted) setState(() { status = 'HD-Video und Ton werden zusammengefügt'; downloadPhase = 'Zusammenfügen'; receivedBytes = 0; totalBytes = 0; progress = 0.95; });
         String quote(String value) => '"${value.replaceAll('"', r'\\"')}"';
         final session = await FFmpegKit.execute('-y -i ${quote(videoFile.path)} -i ${quote(audioFile.path)} -map 0:v:0 -map 1:a:0 -c copy ${quote(output.path)}');
         final code = await session.getReturnCode();
@@ -230,8 +254,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
           ),
         ),
       const SizedBox(height: 12),
-      TextField(controller: url, decoration: const InputDecoration(
-        border: OutlineInputBorder(), labelText: 'Video-URL oder direkter Medienlink')),
+      TextField(controller: url, minLines: 1, maxLines: 4, decoration: const InputDecoration(
+        border: OutlineInputBorder(), labelText: 'Video-Links (mehrere mit Leerzeichen oder Zeilenumbruch)')),
       Align(alignment: Alignment.centerRight, child: TextButton.icon(
         onPressed: busy ? null : pasteLink,
         icon: const Icon(Icons.content_paste), label: const Text('Link einfügen'))),
@@ -241,8 +265,15 @@ class _DownloadScreenState extends State<DownloadScreen> {
       FilledButton(onPressed: busy ? null : download, child: const Text('Herunterladen')),
       if (busy) TextButton(onPressed: () { stopYoutube = true; cancel?.cancel('Abgebrochen'); }, child: const Text('Abbrechen')),
       const SizedBox(height: 16),
-      LinearProgressIndicator(value: busy && progress == 0 ? null : progress),
-      if (busy && progress > 0) Text('${(progress * 100).toStringAsFixed(0)} %'),
+      if (busy) ...[
+        LinearProgressIndicator(value: progress == 0 ? null : progress),
+        const SizedBox(height: 6),
+        Text('${(progress * 100).toStringAsFixed(1)} % · $downloadPhase'
+            '${itemCount > 1 ? ' · Video $currentItem von $itemCount' : ''}'),
+        if (totalBytes > 0)
+          Text('${(receivedBytes / 1048576).toStringAsFixed(1)} MB von '
+              '${(totalBytes / 1048576).toStringAsFixed(1)} MB'),
+      ],
       if (!busy && lastSavedFile != null)
         OutlinedButton.icon(onPressed: () async {
           final file = File(lastSavedFile!);
