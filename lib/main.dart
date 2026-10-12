@@ -35,11 +35,13 @@ class _DownloadScreenState extends State<DownloadScreen> {
         entity is File &&
         RegExp(r'\.(mp4|m4a|mp3|webm|mov)$', caseSensitive: false)
             .hasMatch(entity.path)).toList();
-      if (mounted) setState(() {
-        downloadedFiles
-          ..clear()
-          ..addAll(entries.map((entity) => entity.path));
-      });
+      if (mounted) {
+        setState(() {
+          downloadedFiles
+            ..clear()
+            ..addAll(entries.map((entity) => entity.path));
+        });
+      }
     } catch (_) {
       // History is optional; downloads remain usable.
     }
