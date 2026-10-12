@@ -252,7 +252,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       Future<File> tryAlternatives() async {
         Object? lastError;
         for (var i = 0; i < alternatives.length; i++) {
-          if (stopYoutube) throw StateError('Abgebrochen');
+          if (stopYoutube) { throw StateError('Abgebrochen'); }
           final candidate = alternatives[i];
           sourceAttempt = i + 1;
           activeQuality = '${candidate.videoResolution.height}p';
