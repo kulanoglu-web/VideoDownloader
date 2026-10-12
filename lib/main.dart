@@ -3,6 +3,7 @@ import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new_video/return_code.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -293,7 +294,22 @@ class _DownloadScreenState extends State<DownloadScreen> {
           Text('${(receivedBytes / 1048576).toStringAsFixed(1)} MB von '
               '${(totalBytes / 1048576).toStringAsFixed(1)} MB'),
       ],
-      if (!busy && lastSavedFile != null)
+      if (!busy && lastSavedFile != null) ...[
+        const Text('Speicherort der letzten Datei:', style: TextStyle(fontWeight: FontWeight.bold)),
+        SelectableText(lastSavedFile!),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: () async {
+            final result = await OpenFilex.open(lastSavedFile!);
+            if (!context.mounted) return;
+            if (result.type != ResultType.done) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Datei konnte nicht geöffnet werden: ${result.message}')));
+            }
+          },
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('Datei öffnen'),
+        ),
         OutlinedButton.icon(onPressed: () async {
           final file = File(lastSavedFile!);
           if (await file.exists()) {
@@ -303,9 +319,10 @@ class _DownloadScreenState extends State<DownloadScreen> {
               const SnackBar(content: Text('Dateipfad kopiert')));
           }
         }, icon: const Icon(Icons.copy), label: const Text('Dateipfad kopieren')),
+      ],
       const SizedBox(height: 12), Text(status),
       const SizedBox(height: 18),
-      const Text('Downloads dieser Sitzung', style: TextStyle(fontWeight: FontWeight.bold)),
+      const Text('Downloads im internen App-Speicher (noch nicht im öffentlichen Downloads-Ordner)', style: TextStyle(fontWeight: FontWeight.bold)),
       SizedBox(height: 220, child: ListView.builder(itemCount: downloadedFiles.length,
         itemBuilder: (context, index) {
           final file = downloadedFiles[index];
