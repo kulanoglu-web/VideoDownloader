@@ -67,6 +67,9 @@ class _DownloadScreenState extends State<DownloadScreen> {
   String downloadPhase = '';
   int currentItem = 0;
   int itemCount = 0;
+  int sourceAttempt = 0;
+  int sourceCount = 0;
+  String activeQuality = '';
   bool busy = false;
   String status = 'Direkten, erlaubten Medienlink einfügen';
   String? lastSavedFile;
@@ -209,6 +212,16 @@ class _DownloadScreenState extends State<DownloadScreen> {
       }
       final hd = selectVideo(manifest.videoOnly.toList());
       final muxed = selectVideo(manifest.muxed.toList());
+      final videoCandidates = <VideoStreamInfo>[
+        ...manifest.muxed,
+        ...manifest.videoOnly,
+      ]..sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
+      final eligible = videoCandidates.where((stream) =>
+          preferredHeight == 0 || stream.videoResolution.height <= preferredHeight).toList();
+      final alternatives = (eligible.isEmpty ? videoCandidates.reversed.toList() : eligible)
+          .take(6).toList();
+      sourceCount = alternatives.length;
+      sourceAttempt = 0;
       Future<File> saveStream(StreamInfo info, String path, String description, double start, double span) async {
         final file = File(path);
         tempFiles.add(file);
@@ -247,25 +260,53 @@ class _DownloadScreenState extends State<DownloadScreen> {
         if (stopYoutube) throw StateError('Abgebrochen');
         return file;
       }
+      Future<File> tryAlternatives() async {
+        Object? lastError;
+        for (var i = 0; i < alternatives.length; i++) {
+          if (stopYoutube) throw StateError('Abgebrochen');
+          final candidate = alternatives[i];
+          sourceAttempt = i + 1;
+          activeQuality = '${candidate.videoResolution.height}p';
+          final candidatePath = '$base.try${i + 1}.${candidate.container.name}';
+          if (mounted) setState(() {
+            progress = 0;
+            receivedBytes = 0;
+            totalBytes = candidate.size.totalBytes;
+            status = 'Quelle ${i + 1}/${alternatives.length} · $activeQuality';
+          });
+          try {
+            if (candidate is MuxedStreamInfo) {
+              return await saveStream(candidate, candidatePath,
+                  'Quelle ${i + 1}/${alternatives.length}: $activeQuality mit Ton', 0, 1);
+            }
+            if (audio == null) continue;
+            final videoFile = await saveStream(candidate, '$base.try${i + 1}.video.${candidate.container.name}',
+                'Quelle ${i + 1}/${alternatives.length}: $activeQuality Video', 0, 0.7);
+            final audioFile = await saveStream(audio, '$base.try${i + 1}.audio.${audio.container.name}',
+                'Quelle ${i + 1}/${alternatives.length}: Audio', 0.7, 0.25);
+            final merged = File('$base.try${i + 1}.${candidate.container.name == 'mp4' ? 'mp4' : 'mkv'}');
+            if (mounted) setState(() { status = 'Video und Ton zusammenfügen'; progress = 0.95; });
+            String quotePath(String path) => '"${path.replaceAll('"', r'\\"')}"';
+            final session = await FFmpegKit.execute('-y -i ${quotePath(videoFile.path)} -i ${quotePath(audioFile.path)} -map 0:v:0 -map 1:a:0 -c copy ${quotePath(merged.path)}');
+            if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+              throw StateError('Zusammenfügen fehlgeschlagen');
+            }
+            tempFiles.add(merged);
+            return merged;
+          } catch (e) {
+            if (stopYoutube) rethrow;
+            lastError = e;
+            if (mounted) setState(() => status = 'Quelle ${i + 1} fehlgeschlagen – nächste wird geprüft');
+          }
+        }
+        throw StateError('Alle ${alternatives.length} Streams fehlgeschlagen: $lastError');
+      }
       late File output;
       if (audioOnly) {
         if (audio == null) throw StateError('Kein Audiostream verfügbar');
         output = await saveStream(audio, '$base.${audio.container.name}', 'Audio wird geladen', 0, 1);
-      } else if (muxed != null && muxed.videoResolution.height >= (preferredHeight == 0 ? 720 : preferredHeight)) {
-        output = await saveStream(muxed, '$base.${muxed.container.name}', 'Video mit Ton wird geladen', 0, 1);
-      } else if (hd != null && audio != null) {
-        final videoFile = await saveStream(hd, '$base.video.${hd.container.name}', 'HD-Video wird geladen', 0, 0.7);
-        final audioFile = await saveStream(audio, '$base.audio.${audio.container.name}', 'Ton wird geladen', 0.7, 0.25);
-        output = File('$base.${hd.container.name == 'mp4' ? 'mp4' : 'mkv'}');
-        if (mounted) setState(() { status = 'HD-Video und Ton werden zusammengefügt'; downloadPhase = 'Zusammenfügen'; receivedBytes = 0; totalBytes = 0; progress = 0.95; });
-        String quote(String value) => '"${value.replaceAll('"', r'\\"')}"';
-        final session = await FFmpegKit.execute('-y -i ${quote(videoFile.path)} -i ${quote(audioFile.path)} -map 0:v:0 -map 1:a:0 -c copy ${quote(output.path)}');
-        final code = await session.getReturnCode();
-        if (!ReturnCode.isSuccess(code)) throw StateError('Zusammenfügen fehlgeschlagen: ${await session.getOutput()}');
-      } else if (muxed != null) {
-        output = await saveStream(muxed, '$base.${muxed.container.name}', 'Video wird geladen', 0, 1);
       } else {
-        throw StateError('Kein unterstützter Videostream verfügbar');
+        output = await tryAlternatives();
       }
       if (stopYoutube) throw StateError('Abgebrochen');
       for (final file in tempFiles) {
@@ -362,6 +403,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       FilledButton.icon(onPressed: busy ? null : download, icon: const Icon(Icons.file_download_rounded), label: const Text('Download starten', style: TextStyle(fontWeight: FontWeight.bold))),
       if (busy) OutlinedButton.icon(onPressed: cancelDownload, icon: const Icon(Icons.stop_circle_outlined), label: const Text('Download sofort abbrechen')),
       if (busy) Card(child: Padding(padding: const EdgeInsets.all(14), child: Text('Aktueller Schritt: $status'))),
+      if (busy && sourceCount > 0 && !audioOnly) Text('Stream $sourceAttempt von $sourceCount · $activeQuality'),
       const SizedBox(height: 16),
       if (busy) ...[
         LinearProgressIndicator(value: progress == 0 ? null : progress),
