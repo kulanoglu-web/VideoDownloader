@@ -268,7 +268,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
               return await saveStream(candidate, candidatePath,
                   'Quelle ${i + 1}/${alternatives.length}: $activeQuality mit Ton', 0, 1);
             }
-            if (audio == null) continue;
+            if (audio == null) { continue; }
             final videoFile = await saveStream(candidate, '$base.try${i + 1}.video.${candidate.container.name}',
                 'Quelle ${i + 1}/${alternatives.length}: $activeQuality Video', 0, 0.7);
             final audioFile = await saveStream(audio, '$base.try${i + 1}.audio.${audio.container.name}',
