@@ -257,12 +257,14 @@ class _DownloadScreenState extends State<DownloadScreen> {
           sourceAttempt = i + 1;
           activeQuality = '${candidate.videoResolution.height}p';
           final candidatePath = '$base.try${i + 1}.${candidate.container.name}';
-          if (mounted) setState(() {
+          if (mounted) {
+            setState(() {
             progress = 0;
             receivedBytes = 0;
             totalBytes = candidate.size.totalBytes;
             status = 'Quelle ${i + 1}/${alternatives.length} · $activeQuality';
-          });
+            });
+          }
           try {
             if (candidate is MuxedStreamInfo) {
               return await saveStream(candidate, candidatePath,
