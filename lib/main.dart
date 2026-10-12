@@ -28,6 +28,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
   CancelToken? cancel;
   bool stopYoutube = false;
   bool audioOnly = false;
+  int preferredHeight = 0;
+  static const qualityChoices = <int, String>{0: 'Beste verfügbar', 2160: '4K · 2160p', 1440: '1440p', 1080: 'Full HD · 1080p', 720: 'HD · 720p', 480: '480p', 360: '360p', 240: '240p'};
   final youtube = YoutubeExplode();
   bool isYoutube(Uri uri) => const ['youtu.be','youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].contains(uri.host.toLowerCase());
   double progress = 0;
@@ -143,8 +145,17 @@ class _DownloadScreenState extends State<DownloadScreen> {
       final directory = await getApplicationDocumentsDirectory();
       final base = '${directory.path}${Platform.pathSeparator}${video.id.value}';
       final audio = manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null;
-      final hd = manifest.videoOnly.isNotEmpty ? (manifest.videoOnly.toList()..sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height))).first : null;
-      final muxed = manifest.muxed.isNotEmpty ? (manifest.muxed.toList()..sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height))).first : null;
+      VideoStreamInfo? selectVideo(List<VideoStreamInfo> streams) {
+        if (streams.isEmpty) return null;
+        streams.sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
+        if (preferredHeight == 0) return streams.first;
+        for (final stream in streams) {
+          if (stream.videoResolution.height <= preferredHeight) return stream;
+        }
+        return streams.last;
+      }
+      final hd = selectVideo(manifest.videoOnly.toList());
+      final muxed = selectVideo(manifest.muxed.toList());
       Future<File> saveStream(StreamInfo info, String path, String description, double start, double span) async {
         final file = File(path);
         tempFiles.add(file);
@@ -259,6 +270,13 @@ class _DownloadScreenState extends State<DownloadScreen> {
       Align(alignment: Alignment.centerRight, child: TextButton.icon(
         onPressed: busy ? null : pasteLink,
         icon: const Icon(Icons.content_paste), label: const Text('Link einfügen'))),
+      DropdownButtonFormField<int>(
+        initialValue: preferredHeight,
+        decoration: const InputDecoration(labelText: 'Videoqualität', border: OutlineInputBorder()),
+        items: qualityChoices.entries.map((entry) => DropdownMenuItem<int>(
+          value: entry.key, child: Text(entry.value))).toList(),
+        onChanged: busy || audioOnly ? null : (value) => setState(() => preferredHeight = value ?? 0),
+      ),
       SwitchListTile(title: const Text('Nur Audio herunterladen'), value: audioOnly,
         onChanged: busy ? null : (value) => setState(() => audioOnly = value)),
       const SizedBox(height: 16),
