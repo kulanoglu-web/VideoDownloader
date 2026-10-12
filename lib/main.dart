@@ -139,8 +139,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
     setState(() { busy = true; stopYoutube = false; progress = 0; receivedBytes = 0; totalBytes = 0; downloadPhase = 'Videoformate ermitteln'; lastSavedFile = null; status = 'Videoformate werden ermittelt'; });
     final tempFiles = <File>[];
     try {
-      final video = await youtube.videos.get(uri.toString());
-      final manifest = await youtube.videos.streams.getManifest(video.id);
+      final video = await youtube.videos.get(uri.toString()).timeout(const Duration(seconds: 25));
+      final manifest = await youtube.videos.streams.getManifest(video.id).timeout(const Duration(seconds: 35));
       if (stopYoutube) return;
       final directory = await getApplicationDocumentsDirectory();
       final base = '${directory.path}${Platform.pathSeparator}${video.id.value}';
@@ -221,7 +221,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   @override void dispose() { cancel?.cancel(); youtube.close(); dio.close(); url.dispose(); searchController.dispose(); super.dispose(); }
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('VideoDownloader')),
-    body: Padding(padding: const EdgeInsets.all(20), child: Column(
+    body: SingleChildScrollView(child: Padding(padding: const EdgeInsets.all(20), child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('Werbefrei · Lokal · Ohne Konto'),
       const SizedBox(height: 12),
@@ -281,7 +281,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
         onChanged: busy ? null : (value) => setState(() => audioOnly = value)),
       const SizedBox(height: 16),
       FilledButton(onPressed: busy ? null : download, child: const Text('Herunterladen')),
-      if (busy) TextButton(onPressed: () { stopYoutube = true; cancel?.cancel('Abgebrochen'); }, child: const Text('Abbrechen')),
+      if (busy) TextButton(onPressed: () { stopYoutube = true; cancel?.cancel('Abgebrochen'); setState(() => status = 'Abbruch angefordert'); }, child: const Text('Abbrechen')),
+      if (busy) Text('Aktueller Schritt: $status'),
       const SizedBox(height: 16),
       if (busy) ...[
         LinearProgressIndicator(value: progress == 0 ? null : progress),
@@ -305,7 +306,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       const SizedBox(height: 12), Text(status),
       const SizedBox(height: 18),
       const Text('Downloads dieser Sitzung', style: TextStyle(fontWeight: FontWeight.bold)),
-      Expanded(child: ListView.builder(itemCount: downloadedFiles.length,
+      SizedBox(height: 220, child: ListView.builder(itemCount: downloadedFiles.length,
         itemBuilder: (context, index) {
           final file = downloadedFiles[index];
           return ListTile(leading: const Icon(Icons.video_file),
@@ -314,5 +315,5 @@ class _DownloadScreenState extends State<DownloadScreen> {
             trailing: IconButton(icon: const Icon(Icons.copy),
               onPressed: () => Clipboard.setData(ClipboardData(text: file))));
         })),
-    ])));
+    ]))));
 }
