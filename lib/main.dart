@@ -201,17 +201,6 @@ class _DownloadScreenState extends State<DownloadScreen> {
       final directory = await getApplicationDocumentsDirectory();
       final base = '${directory.path}${Platform.pathSeparator}${video.id.value}';
       final audio = manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null;
-      VideoStreamInfo? selectVideo(List<VideoStreamInfo> streams) {
-        if (streams.isEmpty) return null;
-        streams.sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
-        if (preferredHeight == 0) return streams.first;
-        for (final stream in streams) {
-          if (stream.videoResolution.height <= preferredHeight) return stream;
-        }
-        return streams.last;
-      }
-      final hd = selectVideo(manifest.videoOnly.toList());
-      final muxed = selectVideo(manifest.muxed.toList());
       final videoCandidates = <VideoStreamInfo>[
         ...manifest.muxed,
         ...manifest.videoOnly,
