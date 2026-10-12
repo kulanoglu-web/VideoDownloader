@@ -13,7 +13,12 @@ jobs:
           channel: stable
       - name: Generate Android platform
         run: flutter create --platforms=android .
+      - name: Enable Android network permission
+        run: sed -i 's|<manifest xmlns:android=|<manifest xmlns:android=|' android/app/src/main/AndroidManifest.xml
+      - name: Add Internet permission
+        run: sed -i '/<application/i\\    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
       - run: flutter pub get
+      - run: flutter analyze
       - run: flutter build apk --debug
       - uses: actions/upload-artifact@v4
         with:
