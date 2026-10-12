@@ -22,6 +22,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   double progress = 0;
   bool busy = false;
   String status = 'Direkten, erlaubten Medienlink einfügen';
+  String? lastSavedFile;
   Future<void> pasteLink() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) setState(() => url.text = data!.text!.trim());
@@ -35,7 +36,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
     if (!RegExp(r'\.(mp4|m4a|mp3|webm|mov)$', caseSensitive: false).hasMatch(fileName)) {
       setState(() => status = 'Aktuell werden nur direkte Mediendatei-URLs unterstützt'); return;
     }
-    setState(() { busy = true; progress = 0; status = 'Download läuft'; });
+    setState(() { busy = true; progress = 0; lastSavedFile = null; status = 'Download läuft'; });
     cancel = CancelToken();
     try {
       final directory = await getApplicationDocumentsDirectory();
@@ -45,7 +46,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         onReceiveProgress: (received, total) {
           if (mounted && total > 0) setState(() => progress = received / total);
         });
-      if (mounted) setState(() => status = 'Gespeichert: $destination');
+      if (mounted) setState(() { lastSavedFile = destination; status = 'Gespeichert: $destination'; });
     } on DioException catch (e) {
       if (mounted) setState(() => status = CancelToken.isCancel(e) ? 'Abgebrochen' : 'Fehler: ${e.message}');
     } catch (e) {
@@ -69,6 +70,16 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (busy) TextButton(onPressed: () => cancel?.cancel('Abgebrochen'), child: const Text('Abbrechen')),
       const SizedBox(height: 16),
       LinearProgressIndicator(value: busy && progress == 0 ? null : progress),
+      if (busy && progress > 0) Text('${(progress * 100).toStringAsFixed(0)} %'),
+      if (!busy && lastSavedFile != null)
+        OutlinedButton.icon(onPressed: () async {
+          final file = File(lastSavedFile!);
+          if (await file.exists()) {
+            await Clipboard.setData(ClipboardData(text: lastSavedFile!));
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Dateipfad kopiert')));
+          }
+        }, icon: const Icon(Icons.copy), label: const Text('Dateipfad kopieren')),
       const SizedBox(height: 12), Text(status),
     ])));
 }
