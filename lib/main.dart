@@ -23,6 +23,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   bool busy = false;
   String status = 'Direkten, erlaubten Medienlink einfügen';
   String? lastSavedFile;
+  final List<String> downloadedFiles = [];
   Future<void> pasteLink() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) setState(() => url.text = data!.text!.trim());
@@ -46,7 +47,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         onReceiveProgress: (received, total) {
           if (mounted && total > 0) setState(() => progress = received / total);
         });
-      if (mounted) setState(() { lastSavedFile = destination; status = 'Gespeichert: $destination'; });
+      if (mounted) setState(() { lastSavedFile = destination; downloadedFiles.insert(0, destination); status = 'Gespeichert: $destination'; });
     } on DioException catch (e) {
       if (mounted) setState(() => status = CancelToken.isCancel(e) ? 'Abgebrochen' : 'Fehler: ${e.message}');
     } catch (e) {
@@ -81,5 +82,16 @@ class _DownloadScreenState extends State<DownloadScreen> {
           }
         }, icon: const Icon(Icons.copy), label: const Text('Dateipfad kopieren')),
       const SizedBox(height: 12), Text(status),
+      const SizedBox(height: 18),
+      const Text('Downloads dieser Sitzung', style: TextStyle(fontWeight: FontWeight.bold)),
+      Expanded(child: ListView.builder(itemCount: downloadedFiles.length,
+        itemBuilder: (context, index) {
+          final file = downloadedFiles[index];
+          return ListTile(leading: const Icon(Icons.video_file),
+            title: Text(file.split(Platform.pathSeparator).last),
+            subtitle: Text(file, maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: IconButton(icon: const Icon(Icons.copy),
+              onPressed: () => Clipboard.setData(ClipboardData(text: file))));
+        })),
     ])));
 }
