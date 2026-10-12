@@ -1,4 +1,6 @@
 import 'package:dio/dio.dart';
+import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_video/return_code.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -38,7 +40,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       final directory = await getApplicationDocumentsDirectory();
       final entries = await directory.list().where((entity) =>
         entity is File &&
-        RegExp(r'\.(mp4|m4a|mp3|webm|mov)$', caseSensitive: false)
+        RegExp(r'\.(mp4|m4a|mp3|webm|mov|mkv)$', caseSensitive: false)
             .hasMatch(entity.path)).toList();
       if (mounted) {
         setState(() {
@@ -83,56 +85,72 @@ class _DownloadScreenState extends State<DownloadScreen> {
     } finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> downloadYoutube(Uri uri) async {
-    setState(() { busy = true; stopYoutube = false; progress = 0; lastSavedFile = null; status = 'YouTube-Informationen werden geladen'; });
-    File? target;
-    IOSink? sink;
+    setState(() { busy = true; stopYoutube = false; progress = 0; lastSavedFile = null; status = 'Videoformate werden ermittelt'; });
+    final tempFiles = <File>[];
     try {
       final video = await youtube.videos.get(uri.toString());
-      if (stopYoutube) return;
       final manifest = await youtube.videos.streams.getManifest(video.id);
       if (stopYoutube) return;
-      final info = audioOnly
-          ? (manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null)
-          : (manifest.muxed.isNotEmpty ? manifest.muxed.withHighestVideoQuality() : null);
-      if (info == null) {
-        throw StateError(audioOnly ? 'Kein Audiostream verfügbar' : 'Kein kombinierter Videostream verfügbar');
-      }
       final directory = await getApplicationDocumentsDirectory();
-      final extension = info.container.name;
-      final filename = '${video.id.value}.$extension';
-      target = File('${directory.path}${Platform.pathSeparator}$filename');
-      sink = target.openWrite();
-      var received = 0;
-      final total = info.size.totalBytes;
-      if (mounted) setState(() => status = 'Lade: ${video.title}');
-      await for (final chunk in youtube.videos.streams.get(info)) {
-        if (stopYoutube) break;
-        sink.add(chunk);
-        received += chunk.length;
-        if (mounted && total > 0) {
-          setState(() => progress = (received / total).clamp(0.0, 1.0));
+      final base = '${directory.path}${Platform.pathSeparator}${video.id.value}';
+      final audio = manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null;
+      final hd = manifest.videoOnly.isNotEmpty ? manifest.videoOnly.withHighestVideoQuality() : null;
+      final muxed = manifest.muxed.isNotEmpty ? manifest.muxed.withHighestVideoQuality() : null;
+      Future<File> saveStream(StreamInfo info, String path, String description, double start, double span) async {
+        final file = File(path);
+        tempFiles.add(file);
+        final sink = file.openWrite();
+        var received = 0;
+        try {
+          if (mounted) setState(() => status = description);
+          await for (final chunk in youtube.videos.streams.get(info)) {
+            if (stopYoutube) break;
+            sink.add(chunk);
+            received += chunk.length;
+            if (mounted && info.size.totalBytes > 0) {
+              setState(() => progress = start + span * (received / info.size.totalBytes).clamp(0.0, 1.0));
+            }
+          }
+          await sink.flush();
+        } finally {
+          await sink.close();
         }
+        if (stopYoutube) throw StateError('Abgebrochen');
+        return file;
       }
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      if (stopYoutube) {
-        await target.delete();
-        if (mounted) setState(() => status = 'Abgebrochen');
-      } else if (mounted) {
-        setState(() {
-          lastSavedFile = target!.path;
-          downloadedFiles.remove(target.path);
-          downloadedFiles.insert(0, target.path);
-          status = 'Gespeichert: ${target.path}';
-          progress = 1;
-        });
+      late File output;
+      if (audioOnly) {
+        if (audio == null) throw StateError('Kein Audiostream verfügbar');
+        output = await saveStream(audio, '$base.${audio.container.name}', 'Audio wird geladen', 0, 1);
+      } else if (hd != null && audio != null) {
+        final videoFile = await saveStream(hd, '$base.video.${hd.container.name}', 'HD-Video wird geladen', 0, 0.7);
+        final audioFile = await saveStream(audio, '$base.audio.${audio.container.name}', 'Ton wird geladen', 0.7, 0.25);
+        output = File('$base.${hd.container.name == 'mp4' ? 'mp4' : 'mkv'}');
+        if (mounted) setState(() { status = 'HD-Video und Ton werden zusammengefügt'; progress = 0.95; });
+        String quote(String value) => '"${value.replaceAll('"', r'\\"')}"';
+        final session = await FFmpegKit.execute('-y -i ${quote(videoFile.path)} -i ${quote(audioFile.path)} -map 0:v:0 -map 1:a:0 -c copy ${quote(output.path)}');
+        final code = await session.getReturnCode();
+        if (!ReturnCode.isSuccess(code)) throw StateError('Zusammenfügen fehlgeschlagen: ${await session.getOutput()}');
+      } else if (muxed != null) {
+        output = await saveStream(muxed, '$base.${muxed.container.name}', 'Video wird geladen', 0, 1);
+      } else {
+        throw StateError('Kein unterstützter Videostream verfügbar');
       }
+      if (stopYoutube) throw StateError('Abgebrochen');
+      for (final file in tempFiles) {
+        if (file.path != output.path && await file.exists()) await file.delete();
+      }
+      if (mounted) setState(() {
+        lastSavedFile = output.path;
+        downloadedFiles.remove(output.path);
+        downloadedFiles.insert(0, output.path);
+        status = 'Gespeichert: ${output.path}';
+        progress = 1;
+      });
     } catch (e) {
-      if (mounted) setState(() => status = 'YouTube-Fehler: $e');
-      if (sink != null) {
-        await sink.close();
-        if (target != null && await target.exists()) await target.delete();
+      if (mounted) setState(() => status = 'Downloadfehler: $e');
+      for (final file in tempFiles) {
+        if (await file.exists()) await file.delete();
       }
     } finally {
       if (mounted) setState(() => busy = false);
