@@ -29,7 +29,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   CancelToken? cancel;
   bool stopYoutube = false;
   bool audioOnly = false;
-  int preferredHeight = 0;
+  int preferredHeight = 720;
   static const qualityChoices = <int, String>{0: 'Beste verfügbar', 2160: '4K · 2160p', 1440: '1440p', 1080: 'Full HD · 1080p', 720: 'HD · 720p', 480: '480p', 360: '360p', 240: '240p'};
   final youtube = YoutubeExplode();
   bool isYoutube(Uri uri) => const ['youtu.be','youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].contains(uri.host.toLowerCase());
@@ -164,7 +164,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         var received = 0;
         try {
           if (mounted) setState(() { status = description; downloadPhase = description; receivedBytes = 0; totalBytes = info.size.totalBytes; });
-          await for (final chunk in youtube.videos.streams.get(info)) {
+          await for (final chunk in youtube.videos.streams.get(info).timeout(const Duration(seconds: 20))) {
             if (stopYoutube) break;
             sink.add(chunk);
             received += chunk.length;
@@ -183,6 +183,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (audioOnly) {
         if (audio == null) throw StateError('Kein Audiostream verfügbar');
         output = await saveStream(audio, '$base.${audio.container.name}', 'Audio wird geladen', 0, 1);
+      } else if (muxed != null && muxed.videoResolution.height >= (preferredHeight == 0 ? 720 : preferredHeight)) {
+        output = await saveStream(muxed, '$base.${muxed.container.name}', 'Video mit Ton wird geladen', 0, 1);
       } else if (hd != null && audio != null) {
         final videoFile = await saveStream(hd, '$base.video.${hd.container.name}', 'HD-Video wird geladen', 0, 0.7);
         final audioFile = await saveStream(audio, '$base.audio.${audio.container.name}', 'Ton wird geladen', 0.7, 0.25);
@@ -211,7 +213,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         });
       }
     } catch (e) {
-      if (mounted) { setState(() => status = 'Downloadfehler: $e'); }
+      if (mounted) { setState(() => status = 'Downloadfehler: $e. Bitte 480p oder 360p versuchen.'); }
       for (final file in tempFiles) {
         if (await file.exists()) await file.delete();
       }
