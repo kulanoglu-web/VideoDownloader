@@ -94,8 +94,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
       final directory = await getApplicationDocumentsDirectory();
       final base = '${directory.path}${Platform.pathSeparator}${video.id.value}';
       final audio = manifest.audioOnly.isNotEmpty ? manifest.audioOnly.withHighestBitrate() : null;
-      final hd = manifest.videoOnly.isNotEmpty ? manifest.videoOnly.withHighestVideoQuality() : null;
-      final muxed = manifest.muxed.isNotEmpty ? manifest.muxed.withHighestVideoQuality() : null;
+      final hd = manifest.videoOnly.isNotEmpty ? (manifest.videoOnly.toList()..sort((a, b) => b.videoQuality.maxHeight.compareTo(a.videoQuality.maxHeight))).first : null;
+      final muxed = manifest.muxed.isNotEmpty ? (manifest.muxed.toList()..sort((a, b) => b.videoQuality.maxHeight.compareTo(a.videoQuality.maxHeight))).first : null;
       Future<File> saveStream(StreamInfo info, String path, String description, double start, double span) async {
         final file = File(path);
         tempFiles.add(file);
@@ -148,7 +148,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
         progress = 1;
       });
     } catch (e) {
-      if (mounted) setState(() => status = 'Downloadfehler: $e');
+      if (mounted) { setState(() => status = 'Downloadfehler: $e'); }
       for (final file in tempFiles) {
         if (await file.exists()) await file.delete();
       }
