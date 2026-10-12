@@ -90,14 +90,14 @@ class _DownloadScreenState extends State<DownloadScreen> {
     }
   }
   Future<void> download() async {
-    final links = url.text.split(RegExp(r'[\\s,]+')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    final links = url.text.split(RegExp(r'[\s,]+')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     if (links.length > 1) {
       setState(() { itemCount = links.length; currentItem = 0; });
       for (var i = 0; i < links.length; i++) {
         if (stopYoutube && i > 0) break;
         if (mounted) setState(() => currentItem = i + 1);
         final link = Uri.tryParse(links[i]);
-        if (link == null || ![\'http\',\'https\'].contains(link.scheme)) continue;
+        if (link == null || !['http','https'].contains(link.scheme)) { continue; }
         if (isYoutube(link)) { await downloadYoutube(link); }
         else { url.text = links[i]; await downloadDirect(link); }
       }
@@ -107,8 +107,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
     itemCount = 0;
     currentItem = 0;
     final uri = Uri.tryParse(url.text.trim());
-    if (uri == null || ![\'https\',\'http\'].contains(uri.scheme) || uri.host.isEmpty) {
-      setState(() => status = \'Bitte gültige HTTP(S)-URL eingeben\'); return;
+    if (uri == null || !['https','http'].contains(uri.scheme) || uri.host.isEmpty) {
+      setState(() => status = 'Bitte gültige HTTP(S)-URL eingeben'); return;
     }
     if (isYoutube(uri)) { await downloadYoutube(uri); return; }
     await downloadDirect(uri);
