@@ -97,7 +97,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
           final file = File(lastSavedFile!);
           if (await file.exists()) {
             await Clipboard.setData(ClipboardData(text: lastSavedFile!));
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Dateipfad kopiert')));
           }
         }, icon: const Icon(Icons.copy), label: const Text('Dateipfad kopieren')),
