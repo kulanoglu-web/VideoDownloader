@@ -20,6 +20,10 @@ class DownloadScreen extends StatefulWidget {
 }
 class _DownloadScreenState extends State<DownloadScreen> {
   final url = TextEditingController();
+  final searchController = TextEditingController();
+  List<Video> searchResults = [];
+  bool searching = false;
+  String searchStatus = '';
   final dio = Dio();
   CancelToken? cancel;
   bool stopYoutube = false;
@@ -56,6 +60,27 @@ class _DownloadScreenState extends State<DownloadScreen> {
   Future<void> pasteLink() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) setState(() => url.text = data!.text!.trim());
+  }
+  Future<void> searchYoutube() async {
+    final query = searchController.text.trim();
+    if (query.isEmpty || searching) return;
+    setState(() {
+      searching = true;
+      searchStatus = 'YouTube wird durchsucht ...';
+      searchResults = [];
+    });
+    try {
+      final results = await youtube.search.search(query);
+      if (!mounted) return;
+      setState(() {
+        searchResults = results.take(15).toList();
+        searchStatus = searchResults.isEmpty ? 'Keine Videos gefunden' : '${searchResults.length} Videos gefunden';
+      });
+    } catch (e) {
+      if (mounted) setState(() => searchStatus = 'Suche fehlgeschlagen: $e');
+    } finally {
+      if (mounted) setState(() => searching = false);
+    }
   }
   Future<void> download() async {
     final uri = Uri.tryParse(url.text.trim());
@@ -158,13 +183,53 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (mounted) setState(() => busy = false);
     }
   }
-  @override void dispose() { cancel?.cancel(); youtube.close(); dio.close(); url.dispose(); super.dispose(); }
+  @override void dispose() { cancel?.cancel(); youtube.close(); dio.close(); url.dispose(); searchController.dispose(); super.dispose(); }
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('VideoDownloader')),
     body: Padding(padding: const EdgeInsets.all(20), child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('Werbefrei · Lokal · Ohne Konto'),
-      const SizedBox(height: 20),
+      const SizedBox(height: 12),
+      TextField(
+        controller: searchController,
+        textInputAction: TextInputAction.search,
+        onSubmitted: (_) => searchYoutube(),
+        decoration: InputDecoration(
+          border: const OutlineInputBorder(),
+          labelText: 'Auf YouTube suchen',
+          suffixIcon: IconButton(
+            tooltip: 'Suchen',
+            onPressed: searching ? null : searchYoutube,
+            icon: const Icon(Icons.search),
+          ),
+        ),
+      ),
+      if (searching) const LinearProgressIndicator(),
+      if (searchStatus.isNotEmpty) Text(searchStatus),
+      if (searchResults.isNotEmpty)
+        SizedBox(
+          height: 230,
+          child: ListView.builder(
+            itemCount: searchResults.length,
+            itemBuilder: (context, index) {
+              final video = searchResults[index];
+              return ListTile(
+                leading: const Icon(Icons.play_circle_outline),
+                title: Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                subtitle: Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis),
+                trailing: const Icon(Icons.download),
+                onTap: busy ? null : () {
+                  setState(() {
+                    url.text = 'https://www.youtube.com/watch?v=${video.id.value}';
+                    searchStatus = 'Ausgewählt: ${video.title}';
+                  });
+                  download();
+                },
+              );
+            },
+          ),
+        ),
+      const SizedBox(height: 12),
       TextField(controller: url, decoration: const InputDecoration(
         border: OutlineInputBorder(), labelText: 'Video-URL oder direkter Medienlink')),
       Align(alignment: Alignment.centerRight, child: TextButton.icon(
