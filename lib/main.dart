@@ -29,9 +29,21 @@ class _DownloadScreenState extends State<DownloadScreen> {
     loadHistory();
   }
   Future<void> loadHistory() async {
-    final directory = await getApplicationDocumentsDirectory();
-    final entries = await directory.list().where((entity) => entity is File &&
-      RegExp(r'\.(mp4|m4a|mp3|webm|mov)
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final entries = await directory.list().where((entity) =>
+        entity is File &&
+        RegExp(r'\.(mp4|m4a|mp3|webm|mov)$', caseSensitive: false)
+            .hasMatch(entity.path)).toList();
+      if (mounted) setState(() {
+        downloadedFiles
+          ..clear()
+          ..addAll(entries.map((entity) => entity.path));
+      });
+    } catch (_) {
+      // History is optional; downloads remain usable.
+    }
+  }
   Future<void> pasteLink() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) setState(() => url.text = data!.text!.trim());
