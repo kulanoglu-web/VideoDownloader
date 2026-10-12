@@ -1,5 +1,5 @@
 name: video_downloader
-version: 0.2.0+2
+version: 0.3.0+3
 description: Werbefreier Downloader fuer erlaubte direkte Medien-URLs.
 publish_to: none
 environment:
@@ -9,6 +9,7 @@ dependencies:
     sdk: flutter
   dio: ^5.7.0
   youtube_explode_dart: ^3.1.0
+  ffmpeg_kit_flutter_new_video: ^2.5.7
   path_provider: ^2.1.4
   permission_handler: ^11.3.1
   open_filex: ^4.5.0
