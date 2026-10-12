@@ -221,7 +221,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
           final done = Completer<void>();
           activeYoutubeWait = done;
           activeYoutubeStream = youtube.videos.streams.get(info)
-              .timeout(const Duration(seconds: 20)).listen(
+              .timeout(const Duration(seconds: 10)).listen(
             (chunk) {
               if (stopYoutube) return;
               sink.add(chunk);
@@ -239,11 +239,15 @@ class _DownloadScreenState extends State<DownloadScreen> {
             onDone: () { if (!done.isCompleted) done.complete(); },
             cancelOnError: true,
           );
-          await done.future;
+          await done.future.timeout(const Duration(seconds: 30),
+              onTimeout: () => throw TimeoutException('Keine Daten vom Videostream erhalten'));
           activeYoutubeStream = null;
           activeYoutubeWait = null;
           await sink.flush();
         } finally {
+          await activeYoutubeStream?.cancel();
+          activeYoutubeStream = null;
+          activeYoutubeWait = null;
           await sink.close();
         }
         if (stopYoutube) throw StateError('Abgebrochen');
@@ -367,7 +371,6 @@ class _DownloadScreenState extends State<DownloadScreen> {
                     url.text = 'https://www.youtube.com/watch?v=${video.id.value}';
                     searchStatus = 'Ausgewählt: ${video.title}';
                   });
-                  download();
                 },
               ));
             },
@@ -397,10 +400,12 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (busy && sourceCount > 0 && !audioOnly) Text('Stream $sourceAttempt von $sourceCount · $activeQuality'),
       const SizedBox(height: 16),
       if (busy) ...[
-        LinearProgressIndicator(value: progress == 0 ? null : progress),
+        LinearProgressIndicator(value: progress.clamp(0.0, 1.0)),
         const SizedBox(height: 6),
         Text('${(progress * 100).toStringAsFixed(1)} % · $downloadPhase'
             '${itemCount > 1 ? ' · Video $currentItem von $itemCount' : ''}'),
+        if (receivedBytes == 0)
+          const Text('Noch keine Daten empfangen. Bei Zeitüberschreitung wird der nächste Stream versucht.'),
         if (totalBytes > 0)
           Text('${(receivedBytes / 1048576).toStringAsFixed(1)} MB von '
               '${(totalBytes / 1048576).toStringAsFixed(1)} MB'),
